@@ -147,5 +147,9 @@ extern const size_t kDERRSAPrivate2048Len;
 extern const uint8_t kDERRSAPrivate4096[];
 extern const size_t kDERRSAPrivate4096Len;
 
+bool ssl_client_hello_get_extension(const uint8_t *in, size_t in_len,
+                                    CBS *out, uint16_t extension_type);
+                                    
+std::vector<uint16_t> ssl_client_hello_get_all_extensions(const uint8_t *in, size_t in_len);
 
 #endif  // !OPENSSL_HEADER_TOOL_INTERNAL_H

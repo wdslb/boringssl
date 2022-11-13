@@ -1,6 +1,8 @@
+.vscode/
 build/
 build32/
 build64/
+lib/
 ssl/test/runner/runner
 *.pyc
 *.swp

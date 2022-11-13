@@ -276,6 +276,10 @@ bool ssl_parse_client_hello_with_trailing_data(const SSL *ssl, CBS *cbs,
 
   out->client_hello = CBS_data(&copy);
   out->client_hello_len = CBS_len(&copy) - CBS_len(cbs);
+
+  out->ssl->client_hello = (const uint8_t *) OPENSSL_malloc(out->client_hello_len);
+  OPENSSL_memcpy(const_cast<uint8_t *>(out->ssl->client_hello), CBS_data(&copy), out->client_hello_len);
+  out->ssl->client_hello_len = CBS_len(&copy) - CBS_len(cbs);
   return true;
 }
 

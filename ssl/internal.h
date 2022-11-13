@@ -3813,6 +3813,9 @@ struct ssl_st {
 
   // If enable_early_data is true, early data can be sent and accepted.
   bool enable_early_data : 1;
+
+  const uint8_t *client_hello;
+  size_t client_hello_len;
 };
 
 struct ssl_session_st {
