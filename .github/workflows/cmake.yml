@@ -20,6 +20,13 @@ jobs:
     steps:
     - uses: actions/checkout@v3
     
+    - name: Setup cmake
+      uses: jwlawson/actions-setup-cmake@v1.13
+      with:
+        cmake-version: '3.24.x'
+    - name: Use cmake
+      run: cmake --version
+    
     - name: Setup Ninja
       uses: ashutoshvarma/setup-ninja@master
       with:
