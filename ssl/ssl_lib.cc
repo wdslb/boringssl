@@ -141,6 +141,8 @@
 #include <openssl/ssl.h>
 
 #include <algorithm>
+#include <unordered_set>
+#include <vector>
 
 #include <assert.h>
 #include <limits.h>
@@ -193,6 +195,10 @@ static CRYPTO_EX_DATA_CLASS g_ex_data_class_ssl =
     CRYPTO_EX_DATA_CLASS_INIT_WITH_APP_DATA;
 static CRYPTO_EX_DATA_CLASS g_ex_data_class_ssl_ctx =
     CRYPTO_EX_DATA_CLASS_INIT_WITH_APP_DATA;
+
+// GREASE table as in ja3
+static const std::unordered_set<uint16_t> GREASE_table = {0x0a0a, 0x1a1a, 0x2a2a, 0x3a3a, 0x4a4a, 0x5a5a, 0x6a6a, 0x7a7a,
+                                                          0x8a8a, 0x9a9a, 0xaaaa, 0xbaba, 0xcaca, 0xdada, 0xeaea, 0xfafa};
 
 bool CBBFinishArray(CBB *cbb, Array<uint8_t> *out) {
   uint8_t *ptr;
@@ -1386,6 +1392,221 @@ int SSL_get_error(const SSL *ssl, int ret_code) {
   }
 
   return SSL_ERROR_SYSCALL;
+}
+
+static void join(const std::vector<uint16_t>& v, char c, std::string& s) {
+   for (std::vector<std::uint16_t>::const_iterator p = v.begin();
+        p != v.end(); ++p) {
+      if (GREASE_table.find(*p) == GREASE_table.end()) {
+        s += std::to_string(*p);
+        if (p != v.end() - 1) {
+          s += c;
+        }
+      }
+   }
+}
+
+static int compare_uint16_t(const void *p1, const void *p2) {
+  uint16_t u1 = *((const uint16_t *)p1);
+  uint16_t u2 = *((const uint16_t *)p2);
+  if (u1 < u2) {
+    return -1;
+  } else if (u1 > u2) {
+    return 1;
+  } else {
+    return 0;
+  }
+}
+
+static bool tls1_check_duplicate_extensions(const CBS *cbs) {
+  // First pass: count the extensions.
+  size_t num_extensions = 0;
+  CBS extensions = *cbs;
+  while (CBS_len(&extensions) > 0) {
+    uint16_t type;
+    CBS extension;
+
+    if (!CBS_get_u16(&extensions, &type) ||
+        !CBS_get_u16_length_prefixed(&extensions, &extension)) {
+      return false;
+    }
+
+    num_extensions++;
+  }
+
+  if (num_extensions == 0) {
+    return true;
+  }
+
+  bssl::Array<uint16_t> extension_types;
+  if (!extension_types.Init(num_extensions)) {
+    return false;
+  }
+
+  // Second pass: gather the extension types.
+  extensions = *cbs;
+  for (size_t i = 0; i < extension_types.size(); i++) {
+    CBS extension;
+
+    if (!CBS_get_u16(&extensions, &extension_types[i]) ||
+        !CBS_get_u16_length_prefixed(&extensions, &extension)) {
+      // This should not happen.
+      return false;
+    }
+  }
+  assert(CBS_len(&extensions) == 0);
+
+  // Sort the extensions and make sure there are no duplicates.
+  qsort(extension_types.data(), extension_types.size(), sizeof(uint16_t),
+        compare_uint16_t);
+  for (size_t i = 1; i < num_extensions; i++) {
+    if (extension_types[i - 1] == extension_types[i]) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+static std::vector<uint16_t> ssl_client_hello_get_all_extensions(const uint8_t *in, size_t in_len) {
+  std::vector<uint16_t> results;
+  CBS extensions;
+  CBS_init(&extensions, in, in_len);
+  while (CBS_len(&extensions) != 0) {
+    // Decode the next extension.
+    uint16_t type;
+    CBS extension;
+    CBS_get_u16(&extensions, &type);
+    CBS_get_u16_length_prefixed(&extensions, &extension);
+    results.push_back(type);
+  }
+
+  return results;
+}
+
+static bool ssl_client_hello_get_extension(const uint8_t *in, size_t in_len,
+                                    CBS *out, uint16_t extension_type) {
+  CBS extensions;
+  CBS_init(&extensions, in, in_len);
+  while (CBS_len(&extensions) != 0) {
+    // Decode the next extension.
+    uint16_t type;
+    CBS extension;
+    if (!CBS_get_u16(&extensions, &type) ||
+        !CBS_get_u16_length_prefixed(&extensions, &extension)) {
+      return false;
+    }
+
+    if (type == extension_type) {
+      *out = extension;
+      return true;
+    }
+  }
+
+  return false;
+}
+
+static bool parse_u16_array(const CBS *cbs, bssl::Array<uint16_t> *out) {
+  CBS copy = *cbs;
+  if ((CBS_len(&copy) & 1) != 0) {
+    OPENSSL_PUT_ERROR(SSL, SSL_R_DECODE_ERROR);
+    return false;
+  }
+
+  bssl::Array<uint16_t> ret;
+  if (!ret.Init(CBS_len(&copy) / 2)) {
+    return false;
+  }
+  for (size_t i = 0; i < ret.size(); i++) {
+    if (GREASE_table.find(ret[i]) == GREASE_table.end()) {
+      if (!CBS_get_u16(&copy, &ret[i])) {
+        OPENSSL_PUT_ERROR(SSL, ERR_R_INTERNAL_ERROR);
+        return false;
+      }
+    }
+  }
+
+  assert(CBS_len(&copy) == 0);
+  *out = std::move(ret);
+  return true;
+}
+
+size_t SSL_client_hello_get_ja3_str(SSL *ssl, unsigned char *ja3_str) {
+  std::string ja3;
+  std::vector<uint16_t> ciphers;
+
+  CBS client_hello;
+  CBS_init(&client_hello, ssl->client_hello, ssl->client_hello_len);
+
+  uint16_t version = 0;
+  CBS_get_u16(&client_hello, &version);
+  ja3 += std::to_string(version);
+  ja3 += ',';
+
+  CBS dummy;
+
+  CBS_get_bytes(&client_hello, &dummy, SSL3_RANDOM_SIZE);
+  CBS_get_u8_length_prefixed(&client_hello, &dummy);
+  
+  CBS cipher_suites;
+  CBS_get_u16_length_prefixed(&client_hello, &cipher_suites);
+  
+  while (CBS_len(&cipher_suites) > 0) {
+    uint16_t got_id;
+    CBS_get_u16(&cipher_suites, &got_id);
+    ciphers.push_back(got_id);
+  }
+  join(ciphers, '-', ja3);
+  ja3 += ",";
+
+  CBS_get_u8_length_prefixed(&client_hello, &dummy);
+
+  CBS extensions;
+  if (CBS_len(&client_hello) != 0) {
+    CBS_get_u16_length_prefixed(&client_hello, &extensions);
+    tls1_check_duplicate_extensions(&extensions);
+  }
+  size_t extensions_len = CBS_len(&extensions);
+
+  std::vector<uint16_t> extension_types = ssl_client_hello_get_all_extensions(CBS_data(&extensions), extensions_len);
+  join(extension_types, '-', ja3);
+  ja3 += ",";
+
+  CBS supported_groups;
+  uint16_t supported_groups_len;
+  bssl::Array<uint16_t> peer_supported_group_list;
+
+  ssl_client_hello_get_extension(CBS_data(&extensions), extensions_len, &supported_groups, TLSEXT_TYPE_supported_groups);
+  CBS_get_u16(&supported_groups, &supported_groups_len);
+
+  parse_u16_array(&supported_groups, &peer_supported_group_list);
+
+  size_t group_num = peer_supported_group_list.size();
+
+  for (size_t i = 0; i < group_num; i++) {
+    uint16_t group_id = peer_supported_group_list[i];
+    if (GREASE_table.find(group_id) == GREASE_table.end()) {
+      ja3 += std::to_string(peer_supported_group_list[i]);
+      if (i != group_num - 1) {
+        ja3 += "-";
+      }
+    }
+    
+  }
+  ja3 += ",";
+
+  CBS ec_point_formats;
+
+  ssl_client_hello_get_extension(CBS_data(&extensions), extensions_len, &ec_point_formats, TLSEXT_TYPE_ec_point_formats);
+  uint8_t ec_point_formats_len;
+  CBS_get_u8(&ec_point_formats, &ec_point_formats_len);
+  ja3 += std::to_string(CBS_data(&ec_point_formats)[ec_point_formats_len]);
+
+  if (NULL != ja3_str) {
+    OPENSSL_memcpy(ja3_str, (unsigned char*) const_cast<char*>(ja3.c_str()), ja3.size());
+  }
+
+  return ja3.size();
 }
 
 const char *SSL_error_description(int err) {

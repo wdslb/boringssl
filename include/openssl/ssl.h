@@ -477,6 +477,8 @@ OPENSSL_EXPORT int SSL_get_quiet_shutdown(const SSL *ssl);
 // error was fatal and, if not, when to retry.
 OPENSSL_EXPORT int SSL_get_error(const SSL *ssl, int ret_code);
 
+OPENSSL_EXPORT size_t SSL_client_hello_get_ja3_str(SSL *ssl, unsigned char *ja3_str);
+
 // SSL_ERROR_NONE indicates the operation succeeded.
 #define SSL_ERROR_NONE 0
 
