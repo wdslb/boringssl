@@ -134,8 +134,22 @@ int x509V3_add_value_asn1_string(const char *name, const ASN1_STRING *value,
 int X509V3_NAME_from_section(X509_NAME *nm, const STACK_OF(CONF_VALUE) *dn_sk,
                              int chtype);
 
-int X509V3_get_value_bool(const CONF_VALUE *value, int *asn1_bool);
+// X509V3_bool_from_string decodes |str| as a boolean. On success, it returns
+// one and sets |*out_bool| to resulting value. Otherwise, it returns zero.
+int X509V3_bool_from_string(const char *str, ASN1_BOOLEAN *out_bool);
+
+// X509V3_get_value_bool decodes |value| as a boolean. On success, it returns
+// one and sets |*out_bool| to the resulting value. Otherwise, it returns zero.
+int X509V3_get_value_bool(const CONF_VALUE *value, ASN1_BOOLEAN *out_bool);
+
+// X509V3_get_value_int decodes |value| as an integer. On success, it returns
+// one and sets |*aint| to the resulting value. Otherwise, it returns zero. If
+// |*aint| was non-NULL at the start of the function, it frees the previous
+// value before writing a new one.
 int X509V3_get_value_int(const CONF_VALUE *value, ASN1_INTEGER **aint);
+
+// X509V3_get_section behaves like |NCONF_get_section| but queries |ctx|'s
+// config database.
 const STACK_OF(CONF_VALUE) *X509V3_get_section(const X509V3_CTX *ctx,
                                                const char *section);
 
@@ -166,6 +180,14 @@ STACK_OF(CONF_VALUE) *X509V3_parse_list(const char *line);
 #define X509V3_conf_err(val)                                               \
   ERR_add_error_data(6, "section:", (val)->section, ",name:", (val)->name, \
                      ",value:", (val)->value);
+
+// GENERAL_NAME_cmp returns zero if |a| and |b| are equal and a non-zero
+// value otherwise. Note this function does not provide a comparison suitable
+// for sorting.
+//
+// This function is exported for testing.
+OPENSSL_EXPORT int GENERAL_NAME_cmp(const GENERAL_NAME *a,
+                                    const GENERAL_NAME *b);
 
 
 #if defined(__cplusplus)

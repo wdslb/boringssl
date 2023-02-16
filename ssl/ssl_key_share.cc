@@ -162,7 +162,6 @@ class X25519KeyShare : public SSLKeyShare {
 
     Array<uint8_t> secret;
     if (!secret.Init(32)) {
-      OPENSSL_PUT_ERROR(SSL, ERR_R_MALLOC_FAILURE);
       return false;
     }
 
@@ -227,7 +226,6 @@ class CECPQ2KeyShare : public SSLKeyShare {
               uint8_t *out_alert, Span<const uint8_t> peer_key) override {
     Array<uint8_t> secret;
     if (!secret.Init(32 + HRSS_KEY_BYTES)) {
-      OPENSSL_PUT_ERROR(SSL, ERR_R_MALLOC_FAILURE);
       return false;
     }
 
@@ -265,7 +263,6 @@ class CECPQ2KeyShare : public SSLKeyShare {
 
     Array<uint8_t> secret;
     if (!secret.Init(32 + HRSS_KEY_BYTES)) {
-      OPENSSL_PUT_ERROR(SSL, ERR_R_MALLOC_FAILURE);
       return false;
     }
 
@@ -359,25 +356,21 @@ Span<const NamedGroup> NamedGroups() {
 UniquePtr<SSLKeyShare> SSLKeyShare::Create(uint16_t group_id) {
   switch (group_id) {
     case SSL_CURVE_SECP224R1:
-      return UniquePtr<SSLKeyShare>(
-          New<ECKeyShare>(NID_secp224r1, SSL_CURVE_SECP224R1));
+      return MakeUnique<ECKeyShare>(NID_secp224r1, SSL_CURVE_SECP224R1);
     case SSL_CURVE_SECP256R1:
-      return UniquePtr<SSLKeyShare>(
-          New<ECKeyShare>(NID_X9_62_prime256v1, SSL_CURVE_SECP256R1));
+      return MakeUnique<ECKeyShare>(NID_X9_62_prime256v1, SSL_CURVE_SECP256R1);
     case SSL_CURVE_SECP384R1:
-      return UniquePtr<SSLKeyShare>(
-          New<ECKeyShare>(NID_secp384r1, SSL_CURVE_SECP384R1));
+      return MakeUnique<ECKeyShare>(NID_secp384r1, SSL_CURVE_SECP384R1);
     case SSL_CURVE_SECP521R1:
-      return UniquePtr<SSLKeyShare>(
-          New<ECKeyShare>(NID_secp521r1, SSL_CURVE_SECP521R1));
+      return MakeUnique<ECKeyShare>(NID_secp521r1, SSL_CURVE_SECP521R1);
     case SSL_CURVE_X25519:
-      return UniquePtr<SSLKeyShare>(New<X25519KeyShare>());
+      return MakeUnique<X25519KeyShare>();
     case SSL_CURVE_CECPQ2:
-      return UniquePtr<SSLKeyShare>(New<CECPQ2KeyShare>());
+      return MakeUnique<CECPQ2KeyShare>();
     case SSL_CURVE_X25519KYBER768:
-      return UniquePtr<SSLKeyShare>(New<X25519Kyber768KeyShare>());
+      return MakeUnique<X25519Kyber768KeyShare>();
     case SSL_CURVE_P256KYBER768:
-      return UniquePtr<SSLKeyShare>(New<P256Kyber768KeyShare>());
+      return MakeUnique<P256Kyber768KeyShare>();
     default:
       return nullptr;
   }

@@ -63,7 +63,7 @@ bool StringToInt(T *out, const char *str) {
 
   // |strtoull| allows leading '-' with wraparound. Additionally, both
   // functions accept empty strings and leading whitespace.
-  if (!isdigit(static_cast<unsigned char>(*str)) &&
+  if (!OPENSSL_isdigit(static_cast<unsigned char>(*str)) &&
       (!std::is_signed<T>::value || *str != '-')) {
     return false;
   }
@@ -496,25 +496,26 @@ static CRYPTO_once_t once = CRYPTO_ONCE_INIT;
 static int g_config_index = 0;
 static CRYPTO_BUFFER_POOL *g_pool = nullptr;
 
-static void init_once() {
-  g_config_index = SSL_get_ex_new_index(0, NULL, NULL, NULL, NULL);
-  if (g_config_index < 0) {
-    abort();
-  }
-  g_pool = CRYPTO_BUFFER_POOL_new();
-  if (!g_pool) {
-    abort();
-  }
+static bool InitGlobals() {
+  CRYPTO_once(&once, [] {
+    g_config_index = SSL_get_ex_new_index(0, NULL, NULL, NULL, NULL);
+    g_pool = CRYPTO_BUFFER_POOL_new();
+  });
+  return g_config_index >= 0 && g_pool != nullptr;
 }
 
 bool SetTestConfig(SSL *ssl, const TestConfig *config) {
-  CRYPTO_once(&once, init_once);
+  if (!InitGlobals()) {
+    return false;
+  }
   return SSL_set_ex_data(ssl, g_config_index, (void *)config) == 1;
 }
 
 const TestConfig *GetTestConfig(const SSL *ssl) {
-  CRYPTO_once(&once, init_once);
-  return (const TestConfig *)SSL_get_ex_data(ssl, g_config_index);
+  if (!InitGlobals()) {
+    return nullptr;
+  }
+  return static_cast<const TestConfig *>(SSL_get_ex_data(ssl, g_config_index));
 }
 
 static int LegacyOCSPCallback(SSL *ssl, void *arg) {
@@ -925,22 +926,6 @@ static bool GetCertificate(SSL *ssl, bssl::UniquePtr<X509> *out_x509,
   return true;
 }
 
-static bool FromHexDigit(uint8_t *out, char c) {
-  if ('0' <= c && c <= '9') {
-    *out = c - '0';
-    return true;
-  }
-  if ('a' <= c && c <= 'f') {
-    *out = c - 'a' + 10;
-    return true;
-  }
-  if ('A' <= c && c <= 'F') {
-    *out = c - 'A' + 10;
-    return true;
-  }
-  return false;
-}
-
 static bool HexDecode(std::string *out, const std::string &in) {
   if ((in.size() & 1) != 0) {
     return false;
@@ -949,7 +934,8 @@ static bool HexDecode(std::string *out, const std::string &in) {
   std::unique_ptr<uint8_t[]> buf(new uint8_t[in.size() / 2]);
   for (size_t i = 0; i < in.size() / 2; i++) {
     uint8_t high, low;
-    if (!FromHexDigit(&high, in[i * 2]) || !FromHexDigit(&low, in[i * 2 + 1])) {
+    if (!OPENSSL_fromxdigit(&high, in[i * 2]) ||
+        !OPENSSL_fromxdigit(&low, in[i * 2 + 1])) {
       return false;
     }
     buf[i] = (high << 4) | low;
@@ -1386,13 +1372,16 @@ static bool MaybeInstallCertCompressionAlg(
 }
 
 bssl::UniquePtr<SSL_CTX> TestConfig::SetupCtx(SSL_CTX *old_ctx) const {
+  if (!InitGlobals()) {
+    return nullptr;
+  }
+
   bssl::UniquePtr<SSL_CTX> ssl_ctx(
       SSL_CTX_new(is_dtls ? DTLS_method() : TLS_method()));
   if (!ssl_ctx) {
     return nullptr;
   }
 
-  CRYPTO_once(&once, init_once);
   SSL_CTX_set0_buffer_pool(ssl_ctx.get(), g_pool);
 
   std::string cipher_list = "ALL";
